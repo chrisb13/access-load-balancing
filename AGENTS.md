@@ -1,27 +1,4 @@
-# Universal ACCESS-OM3 Preliminary Profiling + Optimisation Prompt for Codex/Claude
-**Author:** Ezhilsabareesh Kannadasan  
-**Version:** v0.1  
-**Purpose:** A reusable single-prompt workflow for preliminary optimisation of any ACCESS-OM3-style Payu configuration, with **continuous progress tracking after every Codex interaction**, **machine-readable performance summaries**, a **shareable, re-runnable Jupyter notebook with plots**, and **MOM6 mask-table/layout safety for finer-resolution configs**.
-
-This version is designed for configs such as:
-
-- MOM6-CICE6
-- MOM6-CICE6-WW3
-- other ACCESS-OM3 / NUOPC / Payu configurations
-
-It is intentionally component-agnostic. Codex must infer the active components from the local configuration, not assume that WW3/WAV, MOM/OCN, CICE/ICE, DATM/ATM, DROF/ROF, or MED are always present.
-
----
-
-## How to use this file
-
-Copy the entire prompt below into a fresh Codex thread.
-
-Before sending it, replace only the values in the **Case input block**. Leave the rest unchanged.
-
----
-
-# Prompt to send to Codex
+# Prompt to send to AI tool
 
 You are helping perform a preliminary performance profiling and optimisation pass for an ACCESS-OM3 / MOM6-CICE6 / MOM6-CICE6-WW3 / standalone-component configuration on NCI/Gadi.
 
@@ -31,7 +8,7 @@ The goal is not blind tuning. The goal is to use ESMF profile summaries, Payu/PB
 
 Very important: this workflow must produce and keep updating both:
 
-1. A **progress Markdown file**, updated after every meaningful step and after every completed run.
+1. A **progress Markdown file**, updated after every meaningful step and **after every completed run**.
 2. A **re-runnable performance summary notebook**, with plots, tables, and a GitHub-issue-ready optimisation story.
 
 Do not leave plotting and documentation until the end. Start the structure early, then keep it updated after every meaningful Codex response, every approved/rejected idea, and every completed run.
@@ -94,6 +71,7 @@ MOM_MASKTABLE_POLICY = "If OCN/MOM PE count or LAYOUT changes for 25km or 8km co
 13. Every completed run must be added to the performance summary CSV/JSON files and the notebook.
 14. For finer-resolution MOM6/OCN configs, especially 25 km and 8 km, do **not** change `ocn_ntasks`, the MOM `LAYOUT`, or the OCN PET layout without checking whether a new MOM mask table is required.
 15. If a new MOM mask table is required, update `MOM_input` and `config.yaml` consistently and keep the generated mask table in the experiment/configuration directory where possible.
+16. This workflow has been tested on Claude, learn from past mistakes/corrections by reading all these files and following the advice within: `.claude/memory/MEMORY.md`. Also add to these memory files when new mistakes and corrections are needed.
 
 ---
 
