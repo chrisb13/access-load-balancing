@@ -24,9 +24,9 @@ CONFIG_NAME = "<replace with config name, e.g. dev-MC_25km_jra_iaf or MCW_100km_
 
 GITHUB_BRANCH_URL = "<replace with branch URL, e.g. https://github.com/ACCESS-NRI/access-om3-configs/tree/dev-MC_25km_jra_iaf>"
 
-LOCAL_CONFIG_PATH = "<replace with local Gadi config path>"
+LOCAL_CONFIG_PATH = "<replace with local Gadi path to the source/reference config (e.g. a git checkout of the ACCESS-OM3 config repo)>"
 
-ACCESS_PROFILING_PATH = "/g/data/tm70/ek4684/access-profiling"
+PROJECT_PATH = "<replace with top-level project directory; the baseline run, all test runs, and profiling_analysis/ all reside directly inside here>"
 
 ESMF_TRACE_PATH = "/g/data/tm70/ek4684/esmf-trace"
 
@@ -36,11 +36,11 @@ OPTIMISATION_OBJECTIVE = "preliminary optimisation using ESMF profile summary ev
 
 MAX_NEW_TEST_RUNS_FOR_PRELIMINARY_PASS = 3
 
-PROGRESS_MD = "profiling_analysis/<CONFIG_NAME>_optimisation_progress.md"
+PROGRESS_MD = "<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md"
 
-NOTEBOOK_PATH = "profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb"
+NOTEBOOK_PATH = "<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb"
 
-GITHUB_ISSUE_DRAFT = "profiling_analysis/<CONFIG_NAME>_github_issue_draft.md"
+GITHUB_ISSUE_DRAFT = "<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_github_issue_draft.md"
 
 # MOM6 finer-resolution mask table settings. Leave as auto-detect unless you know the answer.
 FINE_RESOLUTION_MOM_MASKTABLE_REQUIRED = "auto-detect; true for 25km and 8km MOM6/OCN configs; usually false for coarser configs"
@@ -127,7 +127,7 @@ LAYOUT = <layout_x>, <layout_y>
 Example exact-layout generation pattern:
 
 ```bash
-cd <LOCAL_CONFIG_PATH>/profiling_analysis/masktables/<layout_x>x<layout_y>
+cd <PROJECT_PATH>/profiling_analysis/masktables/<layout_x>x<layout_y>
 <OM3_SCRIPTS_PATH>/masktable_generation/gen_masktable.sh \
   -g <path/to/ocean_hgrid.nc> \
   -t <path/to/ocean_topog.nc> \
@@ -137,7 +137,7 @@ cd <LOCAL_CONFIG_PATH>/profiling_analysis/masktables/<layout_x>x<layout_y>
 Example range-search pattern, only if explicitly useful and affordable:
 
 ```bash
-cd <LOCAL_CONFIG_PATH>/profiling_analysis/masktables/range_<min>_<max>
+cd <PROJECT_PATH>/profiling_analysis/masktables/range_<min>_<max>
 <OM3_SCRIPTS_PATH>/masktable_generation/gen_masktable.sh \
   -g <path/to/ocean_hgrid.nc> \
   -t <path/to/ocean_topog.nc> \
@@ -150,34 +150,38 @@ Do not confuse total `ncpus` with MOM `LAYOUT`. In coupled configs, `ncpus` may 
 
 ## Required output structure
 
-Create and maintain this directory structure:
+Create and maintain this directory structure. `PROJECT_PATH` is the top-level project directory; the baseline and all test runs are subdirectories alongside `profiling_analysis/`:
 
 ```text
-profiling_analysis/
-├── <CONFIG_NAME>_optimisation_progress.md
-├── <CONFIG_NAME>_performance_notes.md
-├── <CONFIG_NAME>_performance_summary.ipynb
-├── <CONFIG_NAME>_github_issue_draft.md
-├── run_registry.yaml
-├── performance_summary/
-│   ├── run_summary.csv
-│   ├── component_timing.csv
-│   ├── cost_summary.csv
-│   ├── io_summary.csv
-│   ├── pe_layout_summary.csv
-│   ├── mom_masktable_summary.csv
-│   └── optimisation_summary.json
-├── figures/
-│   ├── cost_improvement.png
-│   ├── wallclock_improvement.png
-│   ├── component_timing_critical_path.png
-│   ├── io_bottleneck_summary.png
-│   ├── pe_headroom.png
-│   └── optimisation_summary_panel.png
-└── scripts/
-    ├── parse_performance_logs.py
-    ├── update_performance_summary.py
-    └── generate_performance_notebook.py
+<PROJECT_PATH>/
+├── profiling_analysis/
+│   ├── <CONFIG_NAME>_optimisation_progress.md
+│   ├── <CONFIG_NAME>_performance_notes.md
+│   ├── <CONFIG_NAME>_performance_summary.ipynb
+│   ├── <CONFIG_NAME>_github_issue_draft.md
+│   ├── run_registry.yaml
+│   ├── performance_summary/
+│   │   ├── run_summary.csv
+│   │   ├── component_timing.csv
+│   │   ├── cost_summary.csv
+│   │   ├── io_summary.csv
+│   │   ├── pe_layout_summary.csv
+│   │   ├── mom_masktable_summary.csv
+│   │   └── optimisation_summary.json
+│   ├── figures/
+│   │   ├── cost_improvement.png
+│   │   ├── wallclock_improvement.png
+│   │   ├── component_timing_critical_path.png
+│   │   ├── io_bottleneck_summary.png
+│   │   ├── pe_headroom.png
+│   │   └── optimisation_summary_panel.png
+│   └── scripts/
+│       ├── parse_performance_logs.py
+│       ├── update_performance_summary.py
+│       └── generate_performance_notebook.py
+├── <baseline_run_name>/    ← baseline payu run directory
+├── <test_run_1_name>/      ← first test run directory
+└── <test_run_N_name>/      ← further test run directories
 ```
 
 If some files are not useful for a config, create them with a short note explaining why they are empty or not applicable.
@@ -211,7 +215,7 @@ If the notebook cannot yet be meaningfully plotted because only one run exists, 
 Create or update:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
 ```
 
 This file is the running log for the optimisation thread. It must be updated:
@@ -327,14 +331,14 @@ Keep this file concise but complete. It should allow a collaborator to understan
 Maintain:
 
 ```text
-profiling_analysis/run_registry.yaml
-profiling_analysis/performance_summary/run_summary.csv
-profiling_analysis/performance_summary/component_timing.csv
-profiling_analysis/performance_summary/cost_summary.csv
-profiling_analysis/performance_summary/io_summary.csv
-profiling_analysis/performance_summary/pe_layout_summary.csv
-profiling_analysis/performance_summary/mom_masktable_summary.csv
-profiling_analysis/performance_summary/optimisation_summary.json
+<PROJECT_PATH>/profiling_analysis/run_registry.yaml
+<PROJECT_PATH>/profiling_analysis/performance_summary/run_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/component_timing.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/cost_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/io_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/pe_layout_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/mom_masktable_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/optimisation_summary.json
 ```
 
 ### `run_registry.yaml`
@@ -420,13 +424,13 @@ label,applicable,resolution_hint,ocn_ntasks,ocn_rootpe,layout_x,layout_y,masktab
 Create and maintain:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
 ```
 
-The notebook should be re-runnable from the config directory and should load the CSV/JSON summaries from:
+The notebook should be re-runnable and should load the CSV/JSON summaries from:
 
 ```text
-profiling_analysis/performance_summary/
+<PROJECT_PATH>/profiling_analysis/performance_summary/
 ```
 
 Use `matplotlib` and `pandas`. Do not use seaborn.
@@ -437,7 +441,7 @@ The notebook should follow the same style as the existing MCW performance summar
 2. Absolute or robust relative paths.
 3. Tables first, then plots.
 4. Short markdown narrative before each major plot.
-5. Saved figures under `profiling_analysis/figures/`.
+5. Saved figures under `<PROJECT_PATH>/profiling_analysis/figures/`.
 6. A final recommendation section.
 7. A “How to add future runs” section.
 
@@ -467,13 +471,13 @@ Follow the pattern of the provided `MCW_100km_ERA5_KPP_performance_summary.ipynb
 - define display labels in one dictionary near the top
 - define plotting order from the run registry/CSV, not hard-coded plot cells
 - create tables before plots
-- save every plotted figure to `profiling_analysis/figures/`
+- save every plotted figure to `<PROJECT_PATH>/profiling_analysis/figures/`
 - include a final section explaining how to add future runs
 
 The notebook should be generated or refreshed by a script where practical, for example:
 
 ```text
-profiling_analysis/scripts/generate_performance_notebook.py
+<PROJECT_PATH>/profiling_analysis/scripts/generate_performance_notebook.py
 ```
 
 The notebook must be safe to re-run from top to bottom after a new run is added. Adding a future run should normally require only:
@@ -487,7 +491,7 @@ Do not scatter manually typed performance numbers through plotting cells. If a v
 
 ### Required plots
 
-Create at least these figures and save each to `profiling_analysis/figures/`:
+Create at least these figures and save each to `<PROJECT_PATH>/profiling_analysis/figures/`:
 
 #### 1. `cost_improvement.png`
 
@@ -575,7 +579,7 @@ For an ERA5/DATM forcing-layout investigation, include plots such as:
 Create/update:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
 ```
 
 The issue draft should be updated whenever the notebook is updated.
@@ -598,22 +602,22 @@ Use this structure:
 ## Figures
 
 ### Cost improvement
-![Cost improvement](profiling_analysis/figures/cost_improvement.png)
+![Cost improvement](<PROJECT_PATH>/profiling_analysis/figures/cost_improvement.png)
 
 ### Wall-clock improvement
-![Wall-clock improvement](profiling_analysis/figures/wallclock_improvement.png)
+![Wall-clock improvement](<PROJECT_PATH>/profiling_analysis/figures/wallclock_improvement.png)
 
 ### Component timing / critical path
-![Component timing](profiling_analysis/figures/component_timing_critical_path.png)
+![Component timing](<PROJECT_PATH>/profiling_analysis/figures/component_timing_critical_path.png)
 
 ### I/O bottleneck
-![I/O bottleneck](profiling_analysis/figures/io_bottleneck_summary.png)
+![I/O bottleneck](<PROJECT_PATH>/profiling_analysis/figures/io_bottleneck_summary.png)
 
 ### PE headroom
-![PE headroom](profiling_analysis/figures/pe_headroom.png)
+![PE headroom](<PROJECT_PATH>/profiling_analysis/figures/pe_headroom.png)
 
 ### Optimisation summary
-![Optimisation summary](profiling_analysis/figures/optimisation_summary_panel.png)
+![Optimisation summary](<PROJECT_PATH>/profiling_analysis/figures/optimisation_summary_panel.png)
 
 ## Safety checks
 
@@ -721,11 +725,11 @@ Use `access-profiling` and `esmf-trace` if they are available and useful. If the
 Update:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
-profiling_analysis/<CONFIG_NAME>_performance_notes.md
-profiling_analysis/run_registry.yaml
-profiling_analysis/performance_summary/*.csv
-profiling_analysis/performance_summary/optimisation_summary.json
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_notes.md
+<PROJECT_PATH>/profiling_analysis/run_registry.yaml
+<PROJECT_PATH>/profiling_analysis/performance_summary/*.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/optimisation_summary.json
 ```
 
 Then create or refresh the notebook, even if it initially contains only baseline data.
@@ -737,7 +741,7 @@ Then create or refresh the notebook, even if it initially contains only baseline
 Before any new test run, create a first version of:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
 ```
 
 At this stage it may contain only baseline data, but it must already include:
@@ -752,7 +756,7 @@ At this stage it may contain only baseline data, but it must already include:
 Also create:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
 ```
 
 It can be marked as a draft / incomplete until at least one optimisation test exists.
@@ -860,19 +864,19 @@ Please approve before I submit.
 After each completed run, immediately update all of:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
-profiling_analysis/<CONFIG_NAME>_performance_notes.md
-profiling_analysis/run_registry.yaml
-profiling_analysis/performance_summary/run_summary.csv
-profiling_analysis/performance_summary/component_timing.csv
-profiling_analysis/performance_summary/cost_summary.csv
-profiling_analysis/performance_summary/io_summary.csv
-profiling_analysis/performance_summary/pe_layout_summary.csv
-profiling_analysis/performance_summary/mom_masktable_summary.csv
-profiling_analysis/performance_summary/optimisation_summary.json
-profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
-profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
-profiling_analysis/figures/*.png
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_notes.md
+<PROJECT_PATH>/profiling_analysis/run_registry.yaml
+<PROJECT_PATH>/profiling_analysis/performance_summary/run_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/component_timing.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/cost_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/io_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/pe_layout_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/mom_masktable_summary.csv
+<PROJECT_PATH>/profiling_analysis/performance_summary/optimisation_summary.json
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
+<PROJECT_PATH>/profiling_analysis/figures/*.png
 ```
 
 For the completed run, report:
@@ -978,10 +982,10 @@ The notebook should be robust to future runs: adding a new row to CSVs and `run_
 At the end of the preliminary pass, update:
 
 ```text
-profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
-profiling_analysis/<CONFIG_NAME>_performance_notes.md
-profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
-profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_notes.md
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_summary.ipynb
+<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_github_issue_draft.md
 ```
 
 The final recommendation must include:
