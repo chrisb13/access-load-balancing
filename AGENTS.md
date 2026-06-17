@@ -72,7 +72,7 @@ MOM_MASKTABLE_POLICY = "If OCN/MOM PE count or LAYOUT changes for 25km or 8km co
 14. For finer-resolution MOM6/OCN configs, especially 25 km and 8 km, do **not** change `ocn_ntasks`, the MOM `LAYOUT`, or the OCN PET layout without checking whether a new MOM mask table is required.
 15. If a new MOM mask table is required, update `MOM_input` and `config.yaml` consistently and keep the generated mask table in the experiment/configuration directory where possible.
 16. This workflow has been tested on Claude, learn from past mistakes/corrections by reading all these files and following the advice within: `.claude/memory/MEMORY.md`. Also add to these memory files when new mistakes and corrections are needed.
-17. Minimise the number of times you need to ask for approval when interacting with Gadi or the local shell. Where possible combine up Gadi/shell queries into one large prompt so as to minimise human-needed approval.
+17. For read-only Gadi queries, batch commands to reduce approval prompts. The Stage 5 job-submission approval gate is non-negotiable.
 18. When changing the total number of nodes, try to keep the ratio of ocn to non_ocn cores similar to the baseline.
 19. As we progress through the 11 stages, announce to the user which stage we are in.
 
