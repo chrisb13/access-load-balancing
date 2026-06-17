@@ -28,7 +28,7 @@ LOCAL_CONFIG_PATH = "<replace with local Gadi path to the source/reference confi
 
 PROJECT_PATH = "<replace with top-level project directory; the baseline run, all test runs, and profiling_analysis/ all reside directly inside here>"
 
-ESMF_TRACE_PATH = "/g/data/tm70/ek4684/esmf-trace"
+ESMF_TRACE_PATH = "<replace with path to esmf-trace tool, or leave blank if not available>"
 
 EXPECTED_RUN_COMMAND = "inspect first; usually: module use /g/data/vk83/modules && module load payu && payu run"
 
