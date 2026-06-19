@@ -21,3 +21,10 @@ PYEOF"
 ```
 
 If you genuinely need `${VAR}` to appear literally in the written file (e.g. a PBS script that uses those variables at runtime), escape the dollar sign so the local bash does not expand it: write `\${VAR}` inside the Python content string — the local bash converts `\$` to `$`, so the file receives the literal `${VAR}` text.
+
+If the Python code itself needs literal double-quote characters (e.g. regex patterns matching `"..."` strings), do NOT write a separate script file — use `chr(34)` instead of `"` in the Python source inside the PYEOF heredoc:
+```python
+q = chr(34)
+txt = re.sub('MASKTABLE = ' + q + '[^' + q + ']+' + q, 'MASKTABLE = ' + q + new_val + q, txt)
+```
+This avoids the double-quote terminating the outer SSH double-quoted string, and there is no need for a write-to-file-then-execute two-step.
