@@ -31,21 +31,21 @@ Wider Context. Here, we are trying to optimise the global 8km configuration (oce
 Use these values for this optimisation thread:
 
 ```text
-CONFIG_NAME = "<replace with config name, e.g. dev-MC_25km_jra_iaf or MCW_100km_era5_iaf_KPP>"
+CONFIG_NAME = "780-dev-MC_8km_jra_ryf-2"
 
-GITHUB_BRANCH_URL = "<replace with branch URL, e.g. https://github.com/ACCESS-NRI/access-om3-configs/tree/dev-MC_25km_jra_iaf>"
+GITHUB_BRANCH_URL = "https://github.com/ACCESS-NRI/access-om3-configs/tree/780-dev-MC_8km_jra_ryf-2"
 
-LOCAL_CONFIG_PATH = "<replace with local Gadi path to the source/reference config (e.g. a git checkout of the ACCESS-OM3 config repo)>"
+LOCAL_CONFIG_PATH = "/g/data/tm70/cyb561/access-om3-runs/8k/8k_optimisation/780-dev-MC_8km_jra_ryf-2/
 
-PROJECT_PATH = "<replace with top-level project directory; the baseline run, all test runs, and profiling_analysis/ all reside directly inside here>"
+PROJECT_PATH = "/g/data/tm70/cyb561/access-om3-runs/8k/8k_optimisation/"
 
 ESMF_TRACE_PATH = "<replace with path to esmf-trace tool, or leave blank if not available>"
 
-EXPECTED_RUN_COMMAND = "inspect first; usually: module use /g/data/vk83/modules && module load payu && payu run"
+EXPECTED_RUN_COMMAND = "module use /g/data/vk83/modules && module load payu && payu run"
 
-OPTIMISATION_OBJECTIVE = "preliminary optimisation using ESMF profile summary evidence; optimise both wall-clock and CPU-hours/model-year, but prioritise safe cost reduction if wall-clock is not harmed much"
+OPTIMISATION_OBJECTIVE = "the goal is to reduce the overall runtime of the model while keeping model cost reasonably low. To do this do not change the total number of cores but rather change the partition between ocean and non-ocean model components. i.e. in `nuopc.runconfig` the non-ocean model coponents are: `atm_ntasks`, `cpl_ntasks`, `ice_ntasks`, `ocn_rootpe`, `rof_ntasks` (should all be set to same value), the ocean component is: `ocn_ntasks`."
 
-MAX_NEW_TEST_RUNS_FOR_PRELIMINARY_PASS = 3
+MAX_NEW_TEST_RUNS_FOR_PRELIMINARY_PASS = 5
 
 PROGRESS_MD = "<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md"
 
