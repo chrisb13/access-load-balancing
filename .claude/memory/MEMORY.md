@@ -7,3 +7,4 @@
 - [ACCESS-OM3 short run restart config](feedback_access_om3_short_runs.md) — set `restart_n=35, restart_option=ndays` in nuopc.runconfig to match stop length; `restart_freq` in config.yaml alone is not sufficient
 - [Gadi qstat path](reference_gadi_qstat.md) — qstat not in default SSH PATH; use `/opt/nci/pbs/2024.1.2.20241017100211/bin/qstat -u cyb561`
 - [Gadi payu module](reference_gadi_payu.md) — load payu via `module purge; module use /g/data/vk83/modules; module load payu`
+- [Bash script invocation with flags](feedback_bash_script_invocation.md) — never call `bash script.sh -flag`; bash interprets the flag as its own; call the script directly instead
