@@ -8,3 +8,4 @@
 - [Gadi qstat path](reference_gadi_qstat.md) — qstat not in default SSH PATH; use `/opt/nci/pbs/2024.1.2.20241017100211/bin/qstat -u cyb561`
 - [Gadi payu module](reference_gadi_payu.md) — load payu via `module purge; module use /g/data/vk83/modules; module load payu`
 - [Bash script invocation with flags](feedback_bash_script_invocation.md) — never call `bash script.sh -flag`; bash interprets the flag as its own; call the script directly instead
+- [Gadi normalsr walltime cap](feedback_gadi_normalsr_walltime.md) — normalsr queue hard-limits walltime to 5h at large core counts (≥4992 CPUs); never request more than 05:00:00
