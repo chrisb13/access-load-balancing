@@ -6,12 +6,29 @@ This is a **single-prompt, multi-gate workflow**. Do not wait for me to provide 
 
 The goal is not blind tuning. The goal is to use ESMF profile summaries, Payu/PBS logs, component logs, and, where useful, `access-profiling` / `esmf-trace` to identify the first safe optimisation family for this config.
 
+**Core objective**: the goal is to reduce the overall runtime of the model while keeping model cost reasonably low. The primary optimisation pathway is a nested node/partition search:
+
+1. For each candidate node count, keep the total core count fixed as `ncpus = nodes * CORES_PER_NODE`.
+2. At that fixed total core count, change the partition between ocean and non-ocean model components.
+3. Repeat the partition search across selected node counts between `MIN_NODES` and `MAX_NODES`, starting with the median node count.
+
+In `nuopc.runconfig`, the non-ocean model components are `atm_ntasks`, `cpl_ntasks`, `ice_ntasks`, `ocn_rootpe`, and `rof_ntasks`; these should all be set to the same `non_ocn_ntasks` value. The ocean component is `ocn_ntasks`, with `ocn_rootpe = non_ocn_ntasks` and `ocn_ntasks = ncpus - non_ocn_ntasks`.
+
 Very important: this workflow must produce and keep updating both:
 
 1. A **progress Markdown file**, updated after every meaningful step and **after every completed run**.
 2. A **re-runnable performance summary notebook**, with plots, tables, and a GitHub-issue-ready optimisation story.
 
 Do not leave plotting and documentation until the end. Start the structure early, then keep it updated after every meaningful Codex response, every approved/rejected idea, and every completed run.
+
+Wider Context. Here, we are trying to optimise the global 8km configuration (ocean and sea ice no biogeochemistry), here are the below similar performance numbers for the last generation of the model (ACCESS-OM2):
+
+| Model              | Res.           | Processors\* | cost (kSU/yr) | Walltime (yrs/day) |
+| ------------------ | -------------- | ------------ | ------------- | ------------------ |
+| ACCESS-OM2-01      | 0.1°,75 levels | 5088         | 123           | 2                  |
+| ACCESS-OM2-01-BGC† | 0.1°,75 levels | 5088         | 245           | 1                  |
+| ACCESS-OM2-01      | 0.1°,75 levels | 12144        | 156           | 3.7                |
+| ACCESS-OM2-01-BGC† | 0.1°,75 levels | 12144        | 310           | 1.9
 
 ---
 
@@ -24,7 +41,7 @@ CONFIG_NAME = "<replace with config name, e.g. dev-MC_25km_jra_iaf or MCW_100km_
 
 GITHUB_BRANCH_URL = "<replace with branch URL, e.g. https://github.com/ACCESS-NRI/access-om3-configs/tree/dev-MC_25km_jra_iaf>"
 
-LOCAL_CONFIG_PATH = "<replace with local Gadi path to the source/reference config (e.g. a git checkout of the ACCESS-OM3 config repo)>"
+BASE_CONFIG_PATH = "<replace with Gadi path to the source/reference config checkout used to create the baseline experiment>"
 
 PROJECT_PATH = "<replace with top-level project directory; the baseline run, all test runs, and profiling_analysis/ all reside directly inside here>"
 
@@ -35,6 +52,20 @@ EXPECTED_RUN_COMMAND = "inspect first; usually: module use /g/data/vk83/modules 
 OPTIMISATION_OBJECTIVE = "preliminary optimisation using ESMF profile summary evidence; optimise both wall-clock and CPU-hours/model-year, but prioritise safe cost reduction if wall-clock is not harmed much"
 
 MAX_NEW_TEST_RUNS_FOR_PRELIMINARY_PASS = 3
+
+CORES_PER_NODE = 104
+
+MIN_NODES = "<minimum number of Gadi nodes to test>"
+
+MAX_NODES = "<maximum number of Gadi nodes to test>"
+
+NODE_SEARCH_STRATEGY = "start at the median of MIN_NODES and MAX_NODES, then test lower/higher node counts only if justified by profile evidence"
+
+PARTITION_SEARCH_STRATEGY = "for each fixed node count, keep ncpus = nodes * CORES_PER_NODE fixed and vary the ocn/non-ocn partition"
+
+MAX_PARTITIONS_PER_NODE = 3
+
+MAX_NODE_COUNTS_FOR_PRELIMINARY_PASS = 3
 
 PROGRESS_MD = "<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md"
 
@@ -73,8 +104,14 @@ MOM_MASKTABLE_POLICY = "If OCN/MOM PE count or LAYOUT changes for 25km or 8km co
 15. If a new MOM mask table is required, update `MOM_input` and `config.yaml` consistently and keep the generated mask table in the experiment/configuration directory where possible.
 16. This workflow has been tested on Claude, learn from past mistakes/corrections by reading all these files and following the advice within: `.claude/memory/MEMORY.md`. Also add to these memory files when new mistakes and corrections are needed.
 17. For read-only Gadi queries, batch commands to reduce approval prompts. The Stage 5 job-submission approval gate is non-negotiable.
-18. When changing the total number of nodes, try to keep the ratio of ocn to non_ocn cores similar to the baseline.
+18. When testing a new node count, first preserve the baseline ocean/non-ocean ratio unless the ESMF profile evidence clearly supports a different starting partition.
 19. As we progress through the 11 stages, announce to the user which stage we are in.
+20. Do not change run sequence (`nuopc.runseq`).
+21. For each candidate node count, `ncpus` in `config.yaml` must equal `nodes * CORES_PER_NODE`, and `ncpus` must also equal `non_ocn_ntasks + ocn_ntasks` in `nuopc.runconfig`.
+22. Start the node-count search with the median of `MIN_NODES` and `MAX_NODES`.
+23. At each fixed node count, optimise the concurrent component partition by changing `non_ocn_ntasks` and `ocn_ntasks`, while keeping `ncpus` fixed. Estimate the approximate work per component from seconds/model-step, keep the estimate in a small table/array, and use it to choose the next partition.
+24. After finding the best approved partition for one node count, move to lower or higher node counts between `MIN_NODES` and `MAX_NODES` only if the timing/cost evidence justifies it. Do not blindly run all combinations.
+25. For components that use a layout, especially MOM6/OCN, the valid number of assignable cores must be determined from the landmasking/mask-table process. For MOM6 mask-table configs, verify that `ocn_ntasks = layout_x * layout_y - n_mask`; do not assume the first number in the mask-table filename is `ocn_ntasks`.
 
 ---
 
@@ -90,8 +127,54 @@ All sensitivity experiments should have the same changes as the  `<baseline_run_
 ```
  env:
         ESMF_RUNTIME_PROFILE: "on"
-        ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY BINARY"
+        ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY"
 ```
+
+
+
+## Node and partition search strategy
+
+This workflow uses a nested search, not a single flat sweep.
+
+### Outer loop: node-count search
+
+Candidate total core counts are determined by:
+
+```text
+ncpus = nodes * CORES_PER_NODE
+```
+
+Start with the median of `MIN_NODES` and `MAX_NODES`. After evaluating the median node count, test lower or higher node counts only if the performance/cost evidence justifies it. Do not blindly run every node count unless explicitly approved.
+
+### Inner loop: ocean/non-ocean partition search
+
+For each fixed `ncpus`, vary the partition between ocean and non-ocean components while keeping total cores fixed.
+
+Use this relationship:
+
+```text
+non_ocn_ntasks = atm_ntasks = cpl_ntasks = ice_ntasks = rof_ntasks = ocn_rootpe
+ocn_ntasks = ncpus - non_ocn_ntasks
+non_ocn_ntasks + ocn_ntasks = ncpus
+```
+
+For each proposed partition, use ESMF profile timings to estimate whether the ocean or non-ocean shared component block is on the critical path. Keep a small machine-readable table of the estimate, including:
+
+```text
+nodes,ncpus,non_ocn_ntasks,ocn_ntasks,estimated_non_ocn_s_per_step,estimated_ocn_s_per_step,expected_bottleneck,reason
+```
+
+The search order is:
+
+1. Inspect baseline timing and PE layout.
+2. Select the median node count.
+3. At that fixed node count, propose a small number of ocean/non-ocean partitions.
+4. Run only approved candidates.
+5. Pick the best partition for that node count.
+6. Move to lower or higher node counts only if justified by profile evidence.
+
+For preliminary optimisation, limit the search using `MAX_PARTITIONS_PER_NODE` and `MAX_NODE_COUNTS_FOR_PRELIMINARY_PASS` unless the user explicitly approves a broader campaign.
+
 
 ## MOM6 mask-table and layout guardrails for finer-resolution configs
 
@@ -105,6 +188,14 @@ LAYOUT = 72, 48
 ```
 
 The mask table and layout must match the actual MOM/OCN processor layout. If the OCN PE count or MOM layout changes, the old mask table may become invalid.
+
+For MOM6 mask-table configs, verify the relationship using the contents of the mask table:
+
+```text
+ocn_ntasks = layout_x * layout_y - n_mask
+```
+
+Do not assume the first number in a filename such as `mask_table.1027.72x48` is `ocn_ntasks`; it may refer to the number of masked land-only regions (`n_mask`).
 
 Rules:
 
@@ -287,7 +378,7 @@ Use this structure:
 ## Configuration snapshot
 | Item | Value |
 |---|---|
-| Local path | |
+| Base config path | |
 | Git branch | |
 | Git commit | |
 | Dirty state | |
@@ -670,7 +761,7 @@ The issue draft must clearly distinguish:
 Start with:
 
 ```bash
-cd <LOCAL_CONFIG_PATH>
+cd <BASE_CONFIG_PATH>
 git status
 git branch --show-current
 git rev-parse HEAD
