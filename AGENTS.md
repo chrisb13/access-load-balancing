@@ -45,19 +45,21 @@ BASE_CONFIG_PATH = "<replace with Gadi path to the source/reference config check
 
 PROJECT_PATH = "<replace with top-level project directory; the baseline run, all test runs, and profiling_analysis/ all reside directly inside here>"
 
-# Experiment setup backend. Prefer access-experiment-generator for multi-run sweeps/ensembles when available.
-# Some users may not have it locally; Codex must check availability and fall back cleanly if needed.
-EXPERIMENT_GENERATOR_MODE = "preferred-if-available"
+# Baseline/control setup. By default, the workflow creates the baseline/control experiment instead of assuming it already exists.
+BASELINE_SETUP_MODE = "create-baseline"  # options: create-baseline, existing-baseline
+
+BASELINE_RUN_NAME = "<replace with baseline/control experiment name>"
+
+EXISTING_BASELINE_PATH = "<only fill this if BASELINE_SETUP_MODE = existing-baseline>"
+
+# Experiment setup backend. Use access-experiment-generator by default for baseline + sweep/ensemble setup.
+USE_EXPERIMENT_GENERATOR = "yes"  # options: yes, no
 
 EXPERIMENT_GENERATOR_MODULE_COMMAND = "module use /g/data/vk83/prerelease/modules && module load payu/dev"
 
-EXPERIMENT_GENERATOR_PATH = "<optional local path to access-experiment-generator checkout or executable; leave blank to use PATH after loading the module>"
-
-EXPERIMENT_GENERATOR_REPO_URL = "https://github.com/ACCESS-NRI/access-experiment-generator"
-
 EXPERIMENT_GENERATOR_YAML = "<PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml"
 
-EXPERIMENT_SETUP_POLICY = "Use access-experiment-generator to create baseline/test experiments for sweeps or ensembles when available. If unavailable or unsuitable, fall back to payu clone/manual setup, but document the reason in the progress Markdown and run registry."
+EXPERIMENT_SETUP_POLICY = "If USE_EXPERIMENT_GENERATOR = yes, use access-experiment-generator to create the baseline/control experiment and all approved test experiments from a YAML plan. If USE_EXPERIMENT_GENERATOR = no, use payu clone/manual setup and document why."
 
 ESMF_TRACE_PATH = "<replace with path to esmf-trace tool, or leave blank if not available>"
 
@@ -126,77 +128,90 @@ MOM_MASKTABLE_POLICY = "If OCN/MOM PE count or LAYOUT changes for 25km or 8km co
 23. At each fixed node count, optimise the concurrent component partition by changing `non_ocn_ntasks` and `ocn_ntasks`, while keeping `ncpus` fixed. Estimate the approximate work per component from seconds/model-step, keep the estimate in a small table/array, and use it to choose the next partition.
 24. After finding the best approved partition for one node count, move to lower or higher node counts between `MIN_NODES` and `MAX_NODES` only if the timing/cost evidence justifies it. Do not blindly run all combinations.
 25. For components that use a layout, especially MOM6/OCN, the valid number of assignable cores must be determined from the landmasking/mask-table process. For MOM6 mask-table configs, verify that `ocn_ntasks = layout_x * layout_y - n_mask`; do not assume the first number in the mask-table filename is `ocn_ntasks`.
-26. Prefer `access-experiment-generator` for creating multiple sensitivity/ensemble experiments when it is available and suitable.
-27. Do not run `experiment-generator` without explicit approval. Creating the YAML plan and checking `experiment-generator --help` are allowed as setup/inspection; generating experiments is a write action and must stop at the approval gate.
-28. If `access-experiment-generator` is unavailable locally or through modules, fall back to `payu clone`/manual setup only after documenting why. Do not fail the workflow only because the generator is unavailable.
-29. Every generated experiment must be traceable to either an `Experiment_generator` YAML plan or a documented fallback setup command.
+26. The workflow should set up the baseline/control experiment by default. Do not assume a manually created baseline already exists unless `BASELINE_SETUP_MODE = existing-baseline` and `EXISTING_BASELINE_PATH` is provided.
+27. If `USE_EXPERIMENT_GENERATOR = yes`, use `access-experiment-generator` for both the baseline/control experiment and approved node/partition test experiments. Do not search for arbitrary local installations; use `EXPERIMENT_GENERATOR_MODULE_COMMAND`.
+28. Do not run `experiment-generator` without explicit approval. Creating or editing the YAML plan is allowed as setup/inspection; generating experiments is a write action and must stop at the approval gate.
+29. If `USE_EXPERIMENT_GENERATOR = no`, use `payu clone`/manual setup and document the reason. Every generated experiment must be traceable to either an `Experiment_generator` YAML plan or a documented fallback setup command.
+30. The baseline/control experiment and all test experiments must include this profiling environment in `config.yaml`:
+
+```yaml
+env:
+  ESMF_RUNTIME_PROFILE: "on"
+  ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY BINARY"
+```
 
 ---
 
 ## Creating OM3 experiments
 
-Prefer `access-experiment-generator` for creating multiple sensitivity experiments, node/partition sweeps, or ensemble-style optimisation runs. This reduces manual setup errors and preserves provenance through a YAML setup plan.
+The workflow should normally create the baseline/control experiment itself. Do not assume a manually created baseline already exists unless `BASELINE_SETUP_MODE = existing-baseline`.
 
-Do not assume the tool is installed locally for every user. First check availability, then choose one of these setup backends:
+Use this setup decision:
 
 ```text
-setup_backend = experiment-generator | payu-clone-fallback | existing-experiment
+if BASELINE_SETUP_MODE = create-baseline:
+    create the baseline/control experiment before the baseline profiling run
+else if BASELINE_SETUP_MODE = existing-baseline:
+    inspect EXISTING_BASELINE_PATH and verify it has the required profiling env
+
+if USE_EXPERIMENT_GENERATOR = yes:
+    use access-experiment-generator for baseline/control and approved test experiments
+else:
+    use payu clone/manual setup and document why
 ```
 
-### Experiment-generator availability check
+### Required profiling environment
 
-The availability check is read-only and can be done without job-submission approval:
+The baseline/control experiment and every perturbation/test experiment must include this in `config.yaml`:
 
-```bash
-# Option A: module-provided executable
-<EXPERIMENT_GENERATOR_MODULE_COMMAND>
-command -v experiment-generator
-experiment-generator --help
-
-# Option B: user-provided local checkout/executable, if EXPERIMENT_GENERATOR_PATH is set
-<EXPERIMENT_GENERATOR_PATH>/experiment-generator --help
+```yaml
+env:
+  ESMF_RUNTIME_PROFILE: "on"
+  ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY BINARY"
 ```
 
-If neither option works, document the failure in the progress Markdown and use the fallback workflow below.
+If `BASELINE_SETUP_MODE = existing-baseline` and the existing baseline does not contain this environment block, propose the minimal edit and stop for approval before running or re-running the baseline.
 
 ### Preferred experiment-generator workflow
 
-When `access-experiment-generator` is available and suitable:
+When `USE_EXPERIMENT_GENERATOR = yes`, use `access-experiment-generator` through the known Gadi module command:
 
-1. Create or update:
+```bash
+<EXPERIMENT_GENERATOR_MODULE_COMMAND>
+```
+
+Do not search for arbitrary local installations of `experiment-generator`. The expected executable is the one provided by the module. A simple `experiment-generator --help` check is allowed, but the workflow should not branch into local discovery logic.
+
+Create or update:
 
 ```text
 <PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml
 ```
 
-2. The YAML must describe:
-   - the source repository and start point;
-   - the control/baseline experiment;
-   - one branch/experiment per approved node/partition candidate;
-   - the required `config.yaml` profiling environment;
-   - the `nuopc.runconfig` partition changes;
-   - any `MOM_input`, mask-table, or manifest/config updates required for MOM6 layouts.
+The YAML must describe:
 
-3. All sensitivity experiments should include the following in `config.yaml`:
+- the source repository and start point;
+- the control/baseline experiment named `BASELINE_RUN_NAME`;
+- the required `config.yaml` profiling environment using `SUMMARY BINARY`;
+- one branch/experiment per approved node/partition candidate;
+- the `config.yaml` resource changes;
+- the `nuopc.runconfig` partition changes;
+- any `MOM_input`, mask-table, or manifest/config updates required for MOM6 layouts.
 
-```yaml
-env:
-  ESMF_RUNTIME_PROFILE: "on"
-  ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY"
-```
+If a candidate changes MOM6/OCN layout for 25 km or 8 km configs, generate/validate the required mask table before finalising the YAML, then wire the generated mask-table file and matching `MOM_input`/`config.yaml` edits into the generator plan.
 
-4. If a candidate changes MOM6/OCN layout for 25 km or 8 km configs, generate/validate the required mask table before finalising the YAML, then wire the generated mask-table file and matching `MOM_input`/`config.yaml` edits into the generator plan.
+Before running the generator, stop and show:
 
-5. Before running the generator, stop and show:
-   - the full experiment-generator YAML;
-   - the planned branch/experiment names;
-   - the exact files each candidate will change;
-   - the generated mask-table paths, if applicable;
-   - the expected directory layout under `<PROJECT_PATH>`;
-   - the exact command to run;
-   - the fallback plan if generation fails.
+1. the full experiment-generator YAML;
+2. the planned control/baseline experiment name;
+3. the planned test experiment names;
+4. the exact files each experiment will change;
+5. the generated mask-table paths, if applicable;
+6. the expected directory layout under `<PROJECT_PATH>`;
+7. the exact command to run;
+8. the fallback/manual setup plan only if `USE_EXPERIMENT_GENERATOR = no`.
 
-6. Do not run this command until explicitly approved:
+Do not run this command until explicitly approved:
 
 ```bash
 cd <PROJECT_PATH>
@@ -204,25 +219,27 @@ cd <PROJECT_PATH>
 experiment-generator -i <PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml
 ```
 
-7. After generation, inspect and record:
-   - generated branches/experiment directories;
-   - `git diff` from the control branch for each candidate;
-   - whether all expected files changed and no unexpected files changed;
-   - the setup backend and YAML path in `run_registry.yaml`;
-   - the generator YAML in the progress Markdown.
+After generation, inspect and record:
+
+- generated branches/experiment directories;
+- `git diff` from the control branch for each candidate;
+- whether all expected files changed and no unexpected files changed;
+- the setup backend and YAML path in `run_registry.yaml`;
+- the generator YAML in the progress Markdown.
 
 ### Fallback payu-clone workflow
 
-If `access-experiment-generator` is unavailable or unsuitable, use `payu clone` as the fallback and document why the fallback was used.
+Use this only when `USE_EXPERIMENT_GENERATOR = no` or when the generator is explicitly unsuitable for the case. Document the reason before using the fallback.
 
-Example:
+Example baseline/control setup:
 
 ```bash
 cd <PROJECT_PATH>
-payu clone -b expt -B <CONFIG_NAME> https://github.com/ACCESS-NRI/access-om3-configs <baseline_run_name>
+payu clone -b expt -B <CONFIG_NAME> https://github.com/ACCESS-NRI/access-om3-configs <BASELINE_RUN_NAME>
 ```
 
 For each fallback experiment, record:
+
 - exact clone command;
 - source branch/commit;
 - experiment directory;
@@ -455,9 +472,11 @@ Use this structure:
 | Item | Value | Notes |
 |---|---|---|
 | Setup backend | | `experiment-generator`, `payu-clone-fallback`, or `existing-experiment` |
-| Experiment-generator available? | | |
+| Baseline setup mode | | `create-baseline` or `existing-baseline` |
+| Baseline/control experiment | | |
+| Existing baseline path, if used | | |
+| Use experiment-generator? | | `yes` or `no` |
 | Experiment-generator module command | | |
-| Experiment-generator path | | |
 | Experiment-generator YAML | | |
 | Fallback reason, if used | | |
 | Generated experiment branches/directories | | |
@@ -923,31 +942,65 @@ Record in the progress Markdown:
 - MOM `MASKTABLE` and `LAYOUT`, if `MOM_input` exists
 - whether the config appears to be 25 km, 8 km, or another finer-resolution MOM6 case
 - whether `om3-scripts` and `masktable_generation/gen_masktable.sh` are available locally
-- whether `access-experiment-generator` is available through `EXPERIMENT_GENERATOR_MODULE_COMMAND`, `EXPERIMENT_GENERATOR_PATH`, or `PATH`
-- whether experiment setup should use `experiment-generator`, `payu-clone-fallback`, or an existing experiment directory
+- whether `BASELINE_SETUP_MODE` is `create-baseline` or `existing-baseline`
+- whether `USE_EXPERIMENT_GENERATOR` is `yes` or `no`
+- the baseline/control experiment name or existing baseline path
+- the experiment setup backend: `experiment-generator`, `payu-clone-fallback`, or `existing-experiment`
 
 Do not change anything in this stage.
 
 ---
 
-## Stage 2 — Gather existing baseline timing
+## Stage 2 — Set up or inspect the baseline/control experiment
 
-Before proposing any run, search existing archive/work/logs for completed runs of this config.
+Do not assume the baseline/control experiment already exists. Follow `BASELINE_SETUP_MODE`.
+
+### If `BASELINE_SETUP_MODE = create-baseline`
+
+Prepare the baseline/control experiment before any optimisation tests.
+
+If `USE_EXPERIMENT_GENERATOR = yes`, create or update the experiment-generator YAML so that it includes a control/baseline experiment named `BASELINE_RUN_NAME` and the required profiling environment:
+
+```yaml
+env:
+  ESMF_RUNTIME_PROFILE: "on"
+  ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY BINARY"
+```
+
+Stop for approval before running `experiment-generator`. After the baseline/control experiment is generated, inspect the generated config and show the diff relative to the source/start point.
+
+If `USE_EXPERIMENT_GENERATOR = no`, prepare the baseline/control experiment using `payu clone` or another documented manual setup path. Stop for approval before creating the experiment.
+
+### If `BASELINE_SETUP_MODE = existing-baseline`
+
+Inspect `EXISTING_BASELINE_PATH`. Verify that the existing baseline has:
+
+- the expected branch/commit or clearly documented provenance;
+- the required profiling environment in `config.yaml`;
+- no unexpected science/output/restart changes;
+- usable logs, archives, or a clear reason why a baseline profiling run is still needed.
+
+If the existing baseline is missing the required profiling env, propose the minimal edit and stop for approval before running or re-running it.
+
+### Gather baseline timing
+
+After the baseline/control experiment exists, search its archive/work/logs for completed runs.
 
 Collect, if available:
 
-- Payu timing JSON
-- PBS stdout/stderr
-- ESMF profile summary
-- PET logs, if any
-- `med.log`
-- component logs
-- MOM timing
-- CICE timing
-- WW3 timing
-- DATM/DROF stream read timings
-- restart/history I/O timing
-- esmf-trace output, if any
+- Payu timing JSON;
+- PBS stdout/stderr;
+- ESMF profile summary;
+- ESMF binary profile output, if present;
+- PET logs, if any;
+- `med.log`;
+- component logs;
+- MOM timing;
+- CICE timing;
+- WW3 timing;
+- DATM/DROF stream read timings;
+- restart/history I/O timing;
+- esmf-trace output, if any.
 
 Use `access-profiling` and `esmf-trace` if they are available and useful. If they are not immediately usable, write a small reproducible parser instead of spending too long fighting the environment.
 
@@ -964,8 +1017,6 @@ Update:
 ```
 
 Then create or refresh the notebook, even if it initially contains only baseline data.
-
----
 
 ## Stage 3 — Create the baseline notebook skeleton
 
@@ -1046,7 +1097,7 @@ Before any run, show:
 10. Which progress/CSV/notebook files will be updated after the run.
 11. Experiment setup backend for this run: `experiment-generator`, `payu-clone-fallback`, or `existing-experiment`.
 12. If using `experiment-generator`, the full YAML plan and exact `experiment-generator -i ...` command.
-13. If not using `experiment-generator` for a sweep/ensemble, the documented reason.
+13. If `USE_EXPERIMENT_GENERATOR = no`, the documented reason and fallback setup command.
 
 Stop and ask for approval before submitting.
 
@@ -1072,7 +1123,7 @@ I propose to run: <test label>
 ### Experiment setup
 - Setup backend:
 - Experiment-generator YAML, if used:
-- Fallback reason, if not using experiment-generator for a sweep/ensemble:
+- Fallback reason and command, if `USE_EXPERIMENT_GENERATOR = no`:
 - Experiment setup command, if separate from run command:
 
 ### Safety check
@@ -1136,6 +1187,7 @@ For the completed run, report:
 - memory used
 - active PE layout
 - experiment setup backend and generator YAML/fallback command, if applicable
+- whether this was the baseline/control run or an optimisation test
 - MOM `MASKTABLE` and `LAYOUT`, if applicable
 - generated mask-table path/status, if applicable
 - component timings
@@ -1154,7 +1206,7 @@ Do not run an unlimited optimisation campaign.
 
 Use this policy:
 
-1. Baseline/profile run if existing data is insufficient.
+1. Baseline/control setup and baseline/profile run if existing data is insufficient.
 2. Up to `MAX_NEW_TEST_RUNS_FOR_PRELIMINARY_PASS` optimisation tests.
 3. After each test, decide whether the next test is still justified.
 4. Stop early if:
@@ -1245,8 +1297,9 @@ The final recommendation must include:
 7. Safety checks.
 8. Suggested future work.
 9. MOM mask-table/layout status, if applicable.
-10. Exact final `git diff`.
-11. Whether a final validation run is recommended.
+10. Baseline/control setup provenance, including experiment-generator YAML or fallback command.
+11. Exact final `git diff`.
+12. Whether a final validation run is recommended.
 
 The final notebook must contain the complete story in plots and tables.
 
@@ -1266,11 +1319,12 @@ Your first response should include:
 4. MOM mask-table/layout status, if applicable.
 5. Whether `access-profiling` worked.
 6. Whether `esmf-trace` worked.
-7. Whether `access-experiment-generator` is available, and which experiment setup backend is recommended.
-8. The initial progress Markdown path.
-9. The initial notebook path.
-10. The initial GitHub issue draft path.
-11. What information is still missing.
-12. The proposed next action, if any.
+7. Whether the workflow will create the baseline/control experiment or use an existing baseline.
+8. Whether `USE_EXPERIMENT_GENERATOR` is `yes` or `no`, and which experiment setup backend will be used.
+9. The initial progress Markdown path.
+10. The initial notebook path.
+11. The initial GitHub issue draft path.
+12. What information is still missing.
+13. The proposed next action, if any.
 
 If a profiling or optimisation run is needed, stop at the approval gate before submitting.
