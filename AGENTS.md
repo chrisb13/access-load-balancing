@@ -6,7 +6,13 @@ This is a **single-prompt, multi-gate workflow**. Do not wait for me to provide 
 
 The goal is not blind tuning. The goal is to use ESMF profile summaries, Payu/PBS logs, component logs, and, where useful, `access-profiling` / `esmf-trace` to identify the first safe optimisation family for this config.
 
-**Core objective**: the goal is to reduce the overall runtime of the model while keeping model cost reasonably low. To do this do not change the total number of cores but rather change the partition between ocean and non-ocean model components. i.e. in `nuopc.runconfig` the non-ocean model coponents are: `atm_ntasks`, `cpl_ntasks`, `ice_ntasks`, `ocn_rootpe`, `rof_ntasks` (should all be set to same value), the ocean component is: `ocn_ntasks`.
+**Core objective**: the goal is to reduce the overall runtime of the model while keeping model cost reasonably low. The primary optimisation pathway is a nested node/partition search:
+
+1. For each candidate node count, keep the total core count fixed as `ncpus = nodes * CORES_PER_NODE`.
+2. At that fixed total core count, change the partition between ocean and non-ocean model components.
+3. Repeat the partition search across selected node counts between `MIN_NODES` and `MAX_NODES`, starting with the median node count.
+
+In `nuopc.runconfig`, the non-ocean model components are `atm_ntasks`, `cpl_ntasks`, `ice_ntasks`, `ocn_rootpe`, and `rof_ntasks`; these should all be set to the same `non_ocn_ntasks` value. The ocean component is `ocn_ntasks`, with `ocn_rootpe = non_ocn_ntasks` and `ocn_ntasks = ncpus - non_ocn_ntasks`.
 
 Very important: this workflow must produce and keep updating both:
 
@@ -35,9 +41,25 @@ CONFIG_NAME = "<replace with config name, e.g. dev-MC_25km_jra_iaf or MCW_100km_
 
 GITHUB_BRANCH_URL = "<replace with branch URL, e.g. https://github.com/ACCESS-NRI/access-om3-configs/tree/dev-MC_25km_jra_iaf>"
 
-LOCAL_CONFIG_PATH = "<replace with local Gadi path to the source/reference config (e.g. a git checkout of the ACCESS-OM3 config repo)>"
+BASE_CONFIG_PATH = "<replace with Gadi path to the source/reference config checkout used to create the baseline experiment>"
 
 PROJECT_PATH = "<replace with top-level project directory; the baseline run, all test runs, and profiling_analysis/ all reside directly inside here>"
+
+# Baseline/control setup. By default, the workflow creates the baseline/control experiment instead of assuming it already exists.
+BASELINE_SETUP_MODE = "create-baseline"  # options: create-baseline, existing-baseline
+
+BASELINE_RUN_NAME = "<replace with baseline/control experiment name>"
+
+EXISTING_BASELINE_PATH = "<only fill this if BASELINE_SETUP_MODE = existing-baseline>"
+
+# Experiment setup backend. Use access-experiment-generator by default for baseline + sweep/ensemble setup.
+USE_EXPERIMENT_GENERATOR = "yes"  # options: yes, no
+
+EXPERIMENT_GENERATOR_MODULE_COMMAND = "module use /g/data/vk83/prerelease/modules && module load payu/dev"
+
+EXPERIMENT_GENERATOR_YAML = "<PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml"
+
+EXPERIMENT_SETUP_POLICY = "If USE_EXPERIMENT_GENERATOR = yes, use access-experiment-generator to create the baseline/control experiment and all approved test experiments from a YAML plan. If USE_EXPERIMENT_GENERATOR = no, use payu clone/manual setup and document why."
 
 ESMF_TRACE_PATH = "<replace with path to esmf-trace tool, or leave blank if not available>"
 
@@ -46,6 +68,20 @@ EXPECTED_RUN_COMMAND = "inspect first; usually: module use /g/data/vk83/modules 
 OPTIMISATION_OBJECTIVE = "preliminary optimisation using ESMF profile summary evidence; optimise both wall-clock and CPU-hours/model-year, but prioritise safe cost reduction if wall-clock is not harmed much"
 
 MAX_NEW_TEST_RUNS_FOR_PRELIMINARY_PASS = 3
+
+CORES_PER_NODE = 104
+
+MIN_NODES = "<minimum number of Gadi nodes to test>"
+
+MAX_NODES = "<maximum number of Gadi nodes to test>"
+
+NODE_SEARCH_STRATEGY = "start at the median of MIN_NODES and MAX_NODES, then test lower/higher node counts only if justified by profile evidence"
+
+PARTITION_SEARCH_STRATEGY = "for each fixed node count, keep ncpus = nodes * CORES_PER_NODE fixed and vary the ocn/non-ocn partition"
+
+MAX_PARTITIONS_PER_NODE = 3
+
+MAX_NODE_COUNTS_FOR_PRELIMINARY_PASS = 3
 
 PROGRESS_MD = "<PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md"
 
@@ -84,35 +120,177 @@ MOM_MASKTABLE_POLICY = "If OCN/MOM PE count or LAYOUT changes for 25km or 8km co
 15. If a new MOM mask table is required, update `MOM_input` and `config.yaml` consistently and keep the generated mask table in the experiment/configuration directory where possible.
 16. This workflow has been tested on Claude, learn from past mistakes/corrections by reading all these files and following the advice within: `.claude/memory/MEMORY.md`. Also add to these memory files when new mistakes and corrections are needed.
 17. For read-only Gadi queries, batch commands to reduce approval prompts. The Stage 5 job-submission approval gate is non-negotiable.
-18. When changing the total number of nodes, try to keep the ratio of ocn to non_ocn cores similar to the baseline.
+18. When testing a new node count, first preserve the baseline ocean/non-ocean ratio unless the ESMF profile evidence clearly supports a different starting partition.
 19. As we progress through the 11 stages, announce to the user which stage we are in.
-20. Do not change run sequence (nuopc.runseq)
-21. `ocn_ntasks` + `atm_ntasks` in `nuopc.runconfig` should be multiple of 104, this must equal the total number of cores requested in `config.yaml` called `ncpus`. `ocn_ntasks` must also match the cores specified in `mask_table.<ocn_ntasks>.96x72` (generated by `<OM3_SCRIPTS_PATH>/masktable_generation/gen_masktable.sh` -- details in "MOM6 mask-table and layout guardrails for finer-resolution configs" below)
-22. the first step is to run with the median of `min_nodes` and `max_nodes`
-23. at a fixed number of nodes, change the partitioning between the concurrent components. Do this by changing 
-      - estimate approx. work done by each component based on time/model-step
-      - keep this approx. load as an array per node and partitioning
-      - use that to iterate on optimal partitioning between components
-24. now loop over the min and max number of nodes, while performing the previous step of changing the partitioning between the components
-25. For components that use a layout (e.g.), MOM6, the number of cores assignable to that component needs to be determined by the landmasking process
+20. Do not change run sequence (`nuopc.runseq`).
+21. For each candidate node count, `ncpus` in `config.yaml` must equal `nodes * CORES_PER_NODE`, and `ncpus` must also equal `non_ocn_ntasks + ocn_ntasks` in `nuopc.runconfig`.
+22. Start the node-count search with the median of `MIN_NODES` and `MAX_NODES`.
+23. At each fixed node count, optimise the concurrent component partition by changing `non_ocn_ntasks` and `ocn_ntasks`, while keeping `ncpus` fixed. Estimate the approximate work per component from seconds/model-step, keep the estimate in a small table/array, and use it to choose the next partition.
+24. After finding the best approved partition for one node count, move to lower or higher node counts between `MIN_NODES` and `MAX_NODES` only if the timing/cost evidence justifies it. Do not blindly run all combinations.
+25. For components that use a layout, especially MOM6/OCN, the valid number of assignable cores must be determined from the landmasking/mask-table process. For MOM6 mask-table configs, verify that `ocn_ntasks = layout_x * layout_y - n_mask`; do not assume the first number in the mask-table filename is `ocn_ntasks`.
+26. The workflow should set up the baseline/control experiment by default. Do not assume a manually created baseline already exists unless `BASELINE_SETUP_MODE = existing-baseline` and `EXISTING_BASELINE_PATH` is provided.
+27. If `USE_EXPERIMENT_GENERATOR = yes`, use `access-experiment-generator` for both the baseline/control experiment and approved node/partition test experiments. Do not search for arbitrary local installations; use `EXPERIMENT_GENERATOR_MODULE_COMMAND`.
+28. Do not run `experiment-generator` without explicit approval. Creating or editing the YAML plan is allowed as setup/inspection; generating experiments is a write action and must stop at the approval gate.
+29. If `USE_EXPERIMENT_GENERATOR = no`, use `payu clone`/manual setup and document the reason. Every generated experiment must be traceable to either an `Experiment_generator` YAML plan or a documented fallback setup command.
+30. The baseline/control experiment and all test experiments must include this profiling environment in `config.yaml`:
+
+```yaml
+env:
+  ESMF_RUNTIME_PROFILE: "on"
+  ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY BINARY"
+```
 
 ---
 
 ## Creating OM3 experiments
 
-The following details how to create experiments using `payu clone` here is an example:
-`payu clone -b expt -B <CONFIG_NAME> https://github.com/ACCESS-NRI/access-om3-configs <baseline_run_name>`
-where the last entry is `<baseline_run_name>`, `<test_run_1_name>` etc. 
+The workflow should normally create the baseline/control experiment itself. Do not assume a manually created baseline already exists unless `BASELINE_SETUP_MODE = existing-baseline`.
 
-This command should be run in `<PROJECT_PATH>` when creating sensitivity experiments. 
+Use this setup decision:
 
-All sensitivity experiments should have the same changes as the  `<baseline_run_name>` and the following in the `config.yaml`:
+```text
+if BASELINE_SETUP_MODE = create-baseline:
+    create the baseline/control experiment before the baseline profiling run
+else if BASELINE_SETUP_MODE = existing-baseline:
+    inspect EXISTING_BASELINE_PATH and verify it has the required profiling env
+
+if USE_EXPERIMENT_GENERATOR = yes:
+    use access-experiment-generator for baseline/control and approved test experiments
+else:
+    use payu clone/manual setup and document why
 ```
- env:
-        ESMF_RUNTIME_PROFILE: "on"
-        ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY"
+
+### Required profiling environment
+
+The baseline/control experiment and every perturbation/test experiment must include this in `config.yaml`:
+
+```yaml
+env:
+  ESMF_RUNTIME_PROFILE: "on"
+  ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY BINARY"
 ```
 
+If `BASELINE_SETUP_MODE = existing-baseline` and the existing baseline does not contain this environment block, propose the minimal edit and stop for approval before running or re-running the baseline.
+
+### Preferred experiment-generator workflow
+
+When `USE_EXPERIMENT_GENERATOR = yes`, use `access-experiment-generator` through the known Gadi module command:
+
+```bash
+<EXPERIMENT_GENERATOR_MODULE_COMMAND>
+```
+
+Do not search for arbitrary local installations of `experiment-generator`. The expected executable is the one provided by the module. A simple `experiment-generator --help` check is allowed, but the workflow should not branch into local discovery logic. If this first module/help check fails, immediately switch the setup backend to `payu-clone-fallback`, record the reason in `experiment_setup_status.md` and `run_registry.yaml`, skip the experiment-generator YAML/setup steps, and continue with the normal fallback experiment setup workflow.
+
+Create or update:
+
+```text
+<PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml
+```
+
+The YAML must describe:
+
+- the source repository and start point;
+- the control/baseline experiment named `BASELINE_RUN_NAME`;
+- the required `config.yaml` profiling environment using `SUMMARY BINARY`;
+- one branch/experiment per approved node/partition candidate;
+- the `config.yaml` resource changes;
+- the `nuopc.runconfig` partition changes;
+- any `MOM_input`, mask-table, or manifest/config updates required for MOM6 layouts.
+
+If a candidate changes MOM6/OCN layout for 25 km or 8 km configs, generate/validate the required mask table before finalising the YAML, then wire the generated mask-table file and matching `MOM_input`/`config.yaml` edits into the generator plan.
+
+Before running the generator, stop and show:
+
+1. the full experiment-generator YAML;
+2. the planned control/baseline experiment name;
+3. the planned test experiment names;
+4. the exact files each experiment will change;
+5. the generated mask-table paths, if applicable;
+6. the expected directory layout under `<PROJECT_PATH>`;
+7. the exact command to run;
+8. the fallback/manual setup plan only if `USE_EXPERIMENT_GENERATOR = no`.
+
+Do not run this command until explicitly approved:
+
+```bash
+cd <PROJECT_PATH>
+<EXPERIMENT_GENERATOR_MODULE_COMMAND>
+experiment-generator -i <PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml
+```
+
+After generation, inspect and record:
+
+- generated branches/experiment directories;
+- `git diff` from the control branch for each candidate;
+- whether all expected files changed and no unexpected files changed;
+- the setup backend and YAML path in `run_registry.yaml`;
+- the generator YAML in the progress Markdown.
+
+### Fallback payu-clone workflow
+
+Use this only when `USE_EXPERIMENT_GENERATOR = no` or when the generator is explicitly unsuitable for the case. Document the reason before using the fallback.
+
+Example baseline/control setup:
+
+```bash
+cd <PROJECT_PATH>
+payu clone -b expt -B <CONFIG_NAME> https://github.com/ACCESS-NRI/access-om3-configs <BASELINE_RUN_NAME>
+```
+
+For each fallback experiment, record:
+
+- exact clone command;
+- source branch/commit;
+- experiment directory;
+- manual edits applied;
+- `git diff`;
+- why experiment-generator was not used.
+
+Do not mix experiment-generator and fallback setup for the same sweep unless there is a clear reason and it is documented.
+
+## Node and partition search strategy
+
+This workflow uses a nested search, not a single flat sweep.
+
+### Outer loop: node-count search
+
+Candidate total core counts are determined by:
+
+```text
+ncpus = nodes * CORES_PER_NODE
+```
+
+Start with the median of `MIN_NODES` and `MAX_NODES`. After evaluating the median node count, test lower or higher node counts only if the performance/cost evidence justifies it. Do not blindly run every node count unless explicitly approved.
+
+### Inner loop: ocean/non-ocean partition search
+
+For each fixed `ncpus`, vary the partition between ocean and non-ocean components while keeping total cores fixed.
+
+Use this relationship:
+
+```text
+non_ocn_ntasks = atm_ntasks = cpl_ntasks = ice_ntasks = rof_ntasks = ocn_rootpe
+ocn_ntasks = ncpus - non_ocn_ntasks
+non_ocn_ntasks + ocn_ntasks = ncpus
+```
+
+For each proposed partition, use ESMF profile timings to estimate whether the ocean or non-ocean shared component block is on the critical path. Keep a small machine-readable table of the estimate, including:
+
+```text
+nodes,ncpus,non_ocn_ntasks,ocn_ntasks,estimated_non_ocn_s_per_step,estimated_ocn_s_per_step,expected_bottleneck,reason
+```
+
+The search order is:
+
+1. Inspect baseline timing and PE layout.
+2. Select the median node count.
+3. At that fixed node count, propose a small number of ocean/non-ocean partitions.
+4. Run only approved candidates.
+5. Pick the best partition for that node count.
+6. Move to lower or higher node counts only if justified by profile evidence.
+
+For preliminary optimisation, limit the search using `MAX_PARTITIONS_PER_NODE` and `MAX_NODE_COUNTS_FOR_PRELIMINARY_PASS` unless the user explicitly approves a broader campaign.
 
 
 ## MOM6 mask-table and layout guardrails for finer-resolution configs
@@ -127,6 +305,14 @@ LAYOUT = 72, 48
 ```
 
 The mask table and layout must match the actual MOM/OCN processor layout. If the OCN PE count or MOM layout changes, the old mask table may become invalid.
+
+For MOM6 mask-table configs, verify the relationship using the contents of the mask table:
+
+```text
+ocn_ntasks = layout_x * layout_y - n_mask
+```
+
+Do not assume the first number in a filename such as `mask_table.1027.72x48` is `ocn_ntasks`; it may refer to the number of masked land-only regions (`n_mask`).
 
 Rules:
 
@@ -199,6 +385,8 @@ Create and maintain this directory structure. `PROJECT_PATH` is the top-level pr
 │   ├── <CONFIG_NAME>_performance_notes.md
 │   ├── <CONFIG_NAME>_performance_summary.ipynb
 │   ├── <CONFIG_NAME>_github_issue_draft.md
+│   ├── Experiment_generator_<CONFIG_NAME>.yaml       ← if experiment-generator is used/proposed
+│   ├── experiment_setup_status.md                    ← records generator availability/fallback decisions
 │   ├── run_registry.yaml
 │   ├── performance_summary/
 │   │   ├── run_summary.csv
@@ -280,6 +468,19 @@ Use this structure:
 - Next proposed action:
 - Last updated:
 
+## Experiment setup status
+| Item | Value | Notes |
+|---|---|---|
+| Setup backend | | `experiment-generator`, `payu-clone-fallback`, or `existing-experiment` |
+| Baseline setup mode | | `create-baseline` or `existing-baseline` |
+| Baseline/control experiment | | |
+| Existing baseline path, if used | | |
+| Use experiment-generator? | | `yes` or `no` |
+| Experiment-generator module command | | |
+| Experiment-generator YAML | | |
+| Fallback reason, if used | | |
+| Generated experiment branches/directories | | |
+
 ## Safety constraints checked
 | Constraint | Status | Notes |
 |---|---:|---|
@@ -309,7 +510,7 @@ Use this structure:
 ## Configuration snapshot
 | Item | Value |
 |---|---|
-| Local path | |
+| Base config path | |
 | Git branch | |
 | Git commit | |
 | Dirty state | |
@@ -372,6 +573,8 @@ Maintain:
 
 ```text
 <PROJECT_PATH>/profiling_analysis/run_registry.yaml
+<PROJECT_PATH>/profiling_analysis/experiment_setup_status.md
+<PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml, if experiment-generator is used/proposed
 <PROJECT_PATH>/profiling_analysis/performance_summary/run_summary.csv
 <PROJECT_PATH>/profiling_analysis/performance_summary/component_timing.csv
 <PROJECT_PATH>/profiling_analysis/performance_summary/cost_summary.csv
@@ -392,6 +595,9 @@ Each run must have an entry like:
   status: complete
   accepted: false
   purpose: baseline profiling
+  setup_backend: existing-experiment
+  setup_plan_yaml: null
+  setup_command: null
   local_archive_path: null
   run_start: null
   run_end: null
@@ -692,7 +898,7 @@ The issue draft must clearly distinguish:
 Start with:
 
 ```bash
-cd <LOCAL_CONFIG_PATH>
+cd <BASE_CONFIG_PATH>
 git status
 git branch --show-current
 git rev-parse HEAD
@@ -736,29 +942,65 @@ Record in the progress Markdown:
 - MOM `MASKTABLE` and `LAYOUT`, if `MOM_input` exists
 - whether the config appears to be 25 km, 8 km, or another finer-resolution MOM6 case
 - whether `om3-scripts` and `masktable_generation/gen_masktable.sh` are available locally
+- whether `BASELINE_SETUP_MODE` is `create-baseline` or `existing-baseline`
+- whether `USE_EXPERIMENT_GENERATOR` is `yes` or `no`
+- the baseline/control experiment name or existing baseline path
+- the experiment setup backend: `experiment-generator`, `payu-clone-fallback`, or `existing-experiment`
 
 Do not change anything in this stage.
 
 ---
 
-## Stage 2 — Gather existing baseline timing
+## Stage 2 — Set up or inspect the baseline/control experiment
 
-Before proposing any run, search existing archive/work/logs for completed runs of this config.
+Do not assume the baseline/control experiment already exists. Follow `BASELINE_SETUP_MODE`.
+
+### If `BASELINE_SETUP_MODE = create-baseline`
+
+Prepare the baseline/control experiment before any optimisation tests.
+
+If `USE_EXPERIMENT_GENERATOR = yes`, create or update the experiment-generator YAML so that it includes a control/baseline experiment named `BASELINE_RUN_NAME` and the required profiling environment:
+
+```yaml
+env:
+  ESMF_RUNTIME_PROFILE: "on"
+  ESMF_RUNTIME_PROFILE_OUTPUT: "SUMMARY BINARY"
+```
+
+Stop for approval before running `experiment-generator`. After the baseline/control experiment is generated, inspect the generated config and show the diff relative to the source/start point.
+
+If `USE_EXPERIMENT_GENERATOR = no`, prepare the baseline/control experiment using `payu clone` or another documented manual setup path. Stop for approval before creating the experiment.
+
+### If `BASELINE_SETUP_MODE = existing-baseline`
+
+Inspect `EXISTING_BASELINE_PATH`. Verify that the existing baseline has:
+
+- the expected branch/commit or clearly documented provenance;
+- the required profiling environment in `config.yaml`;
+- no unexpected science/output/restart changes;
+- usable logs, archives, or a clear reason why a baseline profiling run is still needed.
+
+If the existing baseline is missing the required profiling env, propose the minimal edit and stop for approval before running or re-running it.
+
+### Gather baseline timing
+
+After the baseline/control experiment exists, search its archive/work/logs for completed runs.
 
 Collect, if available:
 
-- Payu timing JSON
-- PBS stdout/stderr
-- ESMF profile summary
-- PET logs, if any
-- `med.log`
-- component logs
-- MOM timing
-- CICE timing
-- WW3 timing
-- DATM/DROF stream read timings
-- restart/history I/O timing
-- esmf-trace output, if any
+- Payu timing JSON;
+- PBS stdout/stderr;
+- ESMF profile summary;
+- ESMF binary profile output, if present;
+- PET logs, if any;
+- `med.log`;
+- component logs;
+- MOM timing;
+- CICE timing;
+- WW3 timing;
+- DATM/DROF stream read timings;
+- restart/history I/O timing;
+- esmf-trace output, if any.
 
 Use `access-profiling` and `esmf-trace` if they are available and useful. If they are not immediately usable, write a small reproducible parser instead of spending too long fighting the environment.
 
@@ -768,13 +1010,13 @@ Update:
 <PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
 <PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_notes.md
 <PROJECT_PATH>/profiling_analysis/run_registry.yaml
+<PROJECT_PATH>/profiling_analysis/experiment_setup_status.md
+<PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml, if experiment-generator is used/proposed
 <PROJECT_PATH>/profiling_analysis/performance_summary/*.csv
 <PROJECT_PATH>/profiling_analysis/performance_summary/optimisation_summary.json
 ```
 
 Then create or refresh the notebook, even if it initially contains only baseline data.
-
----
 
 ## Stage 3 — Create the baseline notebook skeleton
 
@@ -853,6 +1095,9 @@ Before any run, show:
 8. Confirmation that science/output/restart/components/forcing are unchanged.
 9. Exact run command.
 10. Which progress/CSV/notebook files will be updated after the run.
+11. Experiment setup backend for this run: `experiment-generator`, `payu-clone-fallback`, or `existing-experiment`.
+12. If using `experiment-generator`, the full YAML plan and exact `experiment-generator -i ...` command.
+13. If `USE_EXPERIMENT_GENERATOR = no`, the documented reason and fallback setup command.
 
 Stop and ask for approval before submitting.
 
@@ -874,6 +1119,12 @@ I propose to run: <test label>
 
 ### Files changed
 ...
+
+### Experiment setup
+- Setup backend:
+- Experiment-generator YAML, if used:
+- Fallback reason and command, if `USE_EXPERIMENT_GENERATOR = no`:
+- Experiment setup command, if separate from run command:
 
 ### Safety check
 | Check | Status |
@@ -907,6 +1158,8 @@ After each completed run, immediately update all of:
 <PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_optimisation_progress.md
 <PROJECT_PATH>/profiling_analysis/<CONFIG_NAME>_performance_notes.md
 <PROJECT_PATH>/profiling_analysis/run_registry.yaml
+<PROJECT_PATH>/profiling_analysis/experiment_setup_status.md
+<PROJECT_PATH>/profiling_analysis/Experiment_generator_<CONFIG_NAME>.yaml, if experiment-generator is used/proposed
 <PROJECT_PATH>/profiling_analysis/performance_summary/run_summary.csv
 <PROJECT_PATH>/profiling_analysis/performance_summary/component_timing.csv
 <PROJECT_PATH>/profiling_analysis/performance_summary/cost_summary.csv
@@ -933,6 +1186,8 @@ For the completed run, report:
 - projected SU/year or CPU-hours/model-year
 - memory used
 - active PE layout
+- experiment setup backend and generator YAML/fallback command, if applicable
+- whether this was the baseline/control run or an optimisation test
 - MOM `MASKTABLE` and `LAYOUT`, if applicable
 - generated mask-table path/status, if applicable
 - component timings
@@ -951,7 +1206,7 @@ Do not run an unlimited optimisation campaign.
 
 Use this policy:
 
-1. Baseline/profile run if existing data is insufficient.
+1. Baseline/control setup and baseline/profile run if existing data is insufficient.
 2. Up to `MAX_NEW_TEST_RUNS_FOR_PRELIMINARY_PASS` optimisation tests.
 3. After each test, decide whether the next test is still justified.
 4. Stop early if:
@@ -1042,8 +1297,9 @@ The final recommendation must include:
 7. Safety checks.
 8. Suggested future work.
 9. MOM mask-table/layout status, if applicable.
-10. Exact final `git diff`.
-11. Whether a final validation run is recommended.
+10. Baseline/control setup provenance, including experiment-generator YAML or fallback command.
+11. Exact final `git diff`.
+12. Whether a final validation run is recommended.
 
 The final notebook must contain the complete story in plots and tables.
 
@@ -1063,10 +1319,12 @@ Your first response should include:
 4. MOM mask-table/layout status, if applicable.
 5. Whether `access-profiling` worked.
 6. Whether `esmf-trace` worked.
-7. The initial progress Markdown path.
-8. The initial notebook path.
-9. The initial GitHub issue draft path.
-10. What information is still missing.
-11. The proposed next action, if any.
+7. Whether the workflow will create the baseline/control experiment or use an existing baseline.
+8. Whether `USE_EXPERIMENT_GENERATOR` is `yes` or `no`, and which experiment setup backend will be used.
+9. The initial progress Markdown path.
+10. The initial notebook path.
+11. The initial GitHub issue draft path.
+12. What information is still missing.
+13. The proposed next action, if any.
 
 If a profiling or optimisation run is needed, stop at the approval gate before submitting.
