@@ -180,7 +180,7 @@ When `USE_EXPERIMENT_GENERATOR = yes`, use `access-experiment-generator` through
 <EXPERIMENT_GENERATOR_MODULE_COMMAND>
 ```
 
-Do not search for arbitrary local installations of `experiment-generator`. The expected executable is the one provided by the module. A simple `experiment-generator --help` check is allowed, but the workflow should not branch into local discovery logic.
+Do not search for arbitrary local installations of `experiment-generator`. The expected executable is the one provided by the module. A simple `experiment-generator --help` check is allowed, but the workflow should not branch into local discovery logic. If this first module/help check fails, immediately switch the setup backend to `payu-clone-fallback`, record the reason in `experiment_setup_status.md` and `run_registry.yaml`, skip the experiment-generator YAML/setup steps, and continue with the normal fallback experiment setup workflow.
 
 Create or update:
 
